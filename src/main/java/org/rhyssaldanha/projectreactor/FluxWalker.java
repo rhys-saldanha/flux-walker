@@ -21,6 +21,7 @@ import java.util.Queue;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -55,23 +56,39 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<Tuple2<Optio
         this.prefetch = prefetch;
     }
 
-    public static <T extends Comparable<T>> Flux<T> bothContain(final Publisher<T> left,
-                                                                final Publisher<T> right) {
-        //noinspection OptionalGetWithoutIsPresent
-        return new FluxWalker<>(left, right,
-                Comparator.naturalOrder(),
-                Queues.xs(),
-                Queues.XS_BUFFER_SIZE)
-                .filter(tuple -> tuple.getT1().isPresent() && tuple.getT2().isPresent())
-                .map(tuple -> tuple.getT1().get());
-    }
-
     public static <T extends Comparable<T>> Flux<Tuple2<Optional<T>, Optional<T>>> zipOptional(final Publisher<T> left,
                                                                                                final Publisher<T> right) {
         return new FluxWalker<>(left, right,
                 Comparator.naturalOrder(),
                 Queues.xs(),
                 Queues.XS_BUFFER_SIZE);
+    }
+
+    /**
+     * Transforms a {@link FluxWalker} into values that are contained in both sources
+     */
+    public static <T> Function<Flux<Tuple2<Optional<T>, Optional<T>>>, Publisher<T>> containSame() {
+        return flux -> flux
+                .filter(OptionalTuple2::bothArePresent)
+                .map(OptionalTuple2::getLeft);
+    }
+
+    /**
+     * Transforms a {@link FluxWalker} into values that are uniquely contained in the left source
+     */
+    public static <T> Function<Flux<Tuple2<Optional<T>, Optional<T>>>, Publisher<T>> uniqueLeft() {
+        return flux -> flux
+                .filter(OptionalTuple2::onlyLeftIsPresent)
+                .map(OptionalTuple2::getLeft);
+    }
+
+    /**
+     * Transforms a {@link FluxWalker} into values that are uniquely contained in the right source
+     */
+    public static <T> Function<Flux<Tuple2<Optional<T>, Optional<T>>>, Publisher<T>> uniqueRight() {
+        return flux -> flux
+                .filter(OptionalTuple2::onlyRightIsPresent)
+                .map(OptionalTuple2::getRight);
     }
 
     @Override

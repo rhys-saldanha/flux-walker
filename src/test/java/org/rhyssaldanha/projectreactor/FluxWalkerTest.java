@@ -1,5 +1,6 @@
 package org.rhyssaldanha.projectreactor;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
@@ -8,40 +9,16 @@ import reactor.test.StepVerifier;
 class FluxWalkerTest {
 
     @Nested
-    class BothContain {
-
-        @Test
-        void empty() {
-            StepVerifier.create(FluxWalker.<Integer>bothContain(Flux.empty(), Flux.empty()))
-                    .verifyComplete();
-        }
-
-        @Test
-        void allElementsMatch() {
-            final Flux<Integer> numbers = Flux.just(1, 2, 3);
-
-            StepVerifier.create(FluxWalker.bothContain(numbers, numbers))
-                    .expectNext(1, 2, 3)
-                    .verifyComplete();
-        }
-
-        @Test
-        void oneMatchingElement() {
-            StepVerifier.create(FluxWalker.bothContain(Flux.just(1, 2, 3), Flux.just(3, 4, 5)))
-                    .expectNext(3)
-                    .verifyComplete();
-        }
-    }
-
-    @Nested
     class ZipOptional {
 
+        @DisplayName("should return an empty flux if both sources are empty")
         @Test
         void empty() {
             StepVerifier.create(FluxWalker.<Integer>zipOptional(Flux.empty(), Flux.empty()))
                     .verifyComplete();
         }
 
+        @DisplayName("when all elements in both sources match")
         @Test
         void allElementsMatch() {
             final Flux<Integer> numbers = Flux.just(1, 2, 3);
@@ -53,6 +30,7 @@ class FluxWalkerTest {
                     .verifyComplete();
         }
 
+        @DisplayName("when some elements are missing from both sources")
         @Test
         void missingElements() {
             StepVerifier.create(FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5)))
@@ -68,25 +46,36 @@ class FluxWalkerTest {
     @Nested
     class FilterZipOptional {
 
+        @DisplayName("can filter to values that are contained in both sources")
         @Test
-        void getOriginalLeft() {
-            final Flux<Integer> actualLeft = FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5))
-                    .filter(OptionalTuple2.leftIsPresent())
-                    .map(OptionalTuple2::getLeft);
+        void getBothContainSame() {
+            final Flux<Integer> same = FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5))
+                    .transform(FluxWalker.containSame());
 
-            StepVerifier.create(actualLeft)
-                    .expectNext(1, 2, 3)
+            StepVerifier.create(same)
+                    .expectNext(3)
                     .verifyComplete();
         }
 
+        @DisplayName("can filter to values that are uniquely in the left source")
         @Test
-        void getOriginalRight() {
-            final Flux<Integer> actualRight = FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5))
-                    .filter(OptionalTuple2.rightIsPresent())
-                    .map(OptionalTuple2::getRight);
+        void getUniqueLeft() {
+            final Flux<Integer> uniqueLeft = FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5))
+                    .transform(FluxWalker.uniqueLeft());
 
-            StepVerifier.create(actualRight)
-                    .expectNext(3, 4, 5)
+            StepVerifier.create(uniqueLeft)
+                    .expectNext(1, 2)
+                    .verifyComplete();
+        }
+
+        @DisplayName("can filter to values that are uniquely in the right source")
+        @Test
+        void getUniqueRight() {
+            final Flux<Integer> uniqueRight = FluxWalker.zipOptional(Flux.just(1, 2, 3), Flux.just(3, 4, 5))
+                    .transform(FluxWalker.uniqueRight());
+
+            StepVerifier.create(uniqueRight)
+                    .expectNext(4, 5)
                     .verifyComplete();
         }
     }
