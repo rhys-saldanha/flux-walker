@@ -11,6 +11,7 @@ import reactor.core.publisher.Operators;
 import reactor.util.annotation.Nullable;
 import reactor.util.concurrent.Queues;
 import reactor.util.context.Context;
+import reactor.util.function.Tuple2;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -29,7 +30,7 @@ import static reactor.core.Fuseable.SYNC;
 /**
  * @apiNote Heavily inspired by {@link reactor.core.publisher.FluxZip}
  */
-public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implements Scannable {
+public final class FluxWalker<T extends Comparable<T>> extends Flux<Tuple2<Optional<T>, Optional<T>>> implements Scannable {
 
     final Publisher<T> leftPublisher, rightPublisher;
 
@@ -56,6 +57,17 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
     public static <T extends Comparable<T>> Flux<T> bothContain(final Publisher<T> left,
                                                                 final Publisher<T> right) {
+        //noinspection OptionalGetWithoutIsPresent
+        return new FluxWalker<>(left, right,
+                Comparator.naturalOrder(),
+                Queues.xs(),
+                Queues.XS_BUFFER_SIZE)
+                .filter(tuple -> tuple.getT1().isPresent() && tuple.getT2().isPresent())
+                .map(tuple -> tuple.getT1().get());
+    }
+
+    public static <T extends Comparable<T>> Flux<Tuple2<Optional<T>, Optional<T>>> zipOptional(final Publisher<T> left,
+                                                                                               final Publisher<T> right) {
         return new FluxWalker<>(left, right,
                 Comparator.naturalOrder(),
                 Queues.xs(),
@@ -68,7 +80,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
     }
 
     @Override
-    public void subscribe(final CoreSubscriber<? super T> actual) {
+    public void subscribe(final CoreSubscriber<? super Tuple2<Optional<T>, Optional<T>>> actual) {
         try {
             final WalkCoordinator<T> coordinator = new WalkCoordinator<>(actual, comparator, queueSupplier, prefetch);
 
@@ -94,7 +106,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
     static final class WalkCoordinator<T> implements Scannable, Subscription {
 
-        final CoreSubscriber<? super T> actual;
+        final CoreSubscriber<? super Tuple2<Optional<T>, Optional<T>>> actual;
 
         final WalkInner<T> leftSubscriber, rightSubscriber;
 
@@ -121,7 +133,9 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
         T leftCurrent, rightCurrent;
 
-        public WalkCoordinator(final CoreSubscriber<? super T> actual,
+        FluxWalkerStrategy<T> strategyCurrent;
+
+        public WalkCoordinator(final CoreSubscriber<? super Tuple2<Optional<T>, Optional<T>>> actual,
                                final Comparator<T> comparator,
                                final Supplier<? extends Queue<T>> queueSupplier,
                                final int prefetch) {
@@ -129,6 +143,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
             this.comparator = comparator;
             this.leftSubscriber = new WalkInner<>(this, prefetch, queueSupplier);
             this.rightSubscriber = new WalkInner<>(this, prefetch, queueSupplier);
+            this.strategyCurrent = new FluxWalkerStrategy.WalkBoth<>(comparator, null, null);
         }
 
         void subscribe(final Publisher<T> left, final Publisher<T> right) {
@@ -168,7 +183,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
             }
         }
 
-        public CoreSubscriber<? super T> actual() {
+        public CoreSubscriber<? super Tuple2<Optional<T>, Optional<T>>> actual() {
             return actual;
         }
 
@@ -252,7 +267,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
                 return;
             }
 
-            final CoreSubscriber<? super T> a = actual;
+            final CoreSubscriber<? super Tuple2<Optional<T>, Optional<T>>> a = actual;
             final WalkInner<T> leftSubscriber = this.leftSubscriber;
             final WalkInner<T> rightSubscriber = this.rightSubscriber;
 
@@ -280,28 +295,19 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
                         return;
                     }
 
-                    boolean empty = false;
+                    if (isComplete(leftSubscriber) && isComplete(rightSubscriber)) {
+                        cancelAll();
+                        discardAll(missed);
+
+                        a.onComplete();
+                        return;
+                    }
 
                     if (leftCurrent == null) {
                         try {
-                            final boolean done = leftSubscriber.done;
                             final Queue<T> queue = leftSubscriber.queue;
 
-                            final T value = queue != null ? queue.poll() : null;
-
-                            final boolean sourceEmpty = value == null;
-                            if (done && sourceEmpty) {
-                                cancelAll();
-                                discardAll(missed);
-
-                                a.onComplete();
-                                return;
-                            }
-                            if (!sourceEmpty) {
-                                leftCurrent = value;
-                            } else {
-                                empty = true;
-                            }
+                            leftCurrent = queue != null ? queue.poll() : null;
                         } catch (final Throwable operatorError) {
                             Throwable mappedError = Operators.onOperatorError(operatorError, actual.currentContext());
 
@@ -320,24 +326,9 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
                     if (rightCurrent == null) {
                         try {
-                            final boolean done = rightSubscriber.done;
                             final Queue<T> queue = rightSubscriber.queue;
 
-                            final T value = queue != null ? queue.poll() : null;
-
-                            final boolean sourceEmpty = value == null;
-                            if (done && sourceEmpty) {
-                                cancelAll();
-                                discardAll(missed);
-
-                                a.onComplete();
-                                return;
-                            }
-                            if (!sourceEmpty) {
-                                rightCurrent = value;
-                            } else {
-                                empty = true;
-                            }
+                            rightCurrent = queue != null ? queue.poll() : null;
                         } catch (final Throwable operatorError) {
                             Throwable mappedError = Operators.onOperatorError(operatorError, actual.currentContext());
 
@@ -354,15 +345,23 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
                         }
                     }
 
-                    if (empty) {
+                    if (leftCurrent == null && !isComplete(leftSubscriber)) {
                         break;
                     }
 
-                    final Optional<T> maybeValue;
+                    if (rightCurrent == null && !isComplete(rightSubscriber)) {
+                        break;
+                    }
+
                     try {
-                        maybeValue = comparator.compare(leftCurrent, rightCurrent) == 0
-                                ? Optional.of(leftCurrent)
-                                : Optional.empty();
+                        strategyCurrent = strategyCurrent.nextStrategy(leftCurrent, rightCurrent);
+                        leftCurrent = strategyCurrent.getLeft();
+                        rightCurrent = strategyCurrent.getRight();
+
+                        a.onNext(strategyCurrent.getOptionalTuple2());
+
+                        count++;
+
                     } catch (final Throwable operatorError) {
                         Throwable mappedError = Operators.onOperatorError(null, operatorError,
                                 new Object[]{leftCurrent, rightCurrent}, actual.currentContext());
@@ -377,13 +376,6 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
                         return;
                     }
-
-                    maybeValue.ifPresent(a::onNext);
-
-                    count++;
-
-                    leftCurrent = null;
-                    rightCurrent = null;
                 }
 
                 if (requested == count) {
@@ -482,6 +474,14 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
                 missed = WIP.addAndGet(this, -missed);
             } while (missed != 0);
+        }
+
+        private static <T> boolean isComplete(final WalkInner<T> subscriber) {
+            return subscriber.done && isQueueEmpty(subscriber);
+        }
+
+        private static <T> boolean isQueueEmpty(final WalkInner<T> subscriber) {
+            return subscriber.queue != null && subscriber.queue.isEmpty();
         }
 
         static int addWork(final WalkCoordinator<?> instance) {
