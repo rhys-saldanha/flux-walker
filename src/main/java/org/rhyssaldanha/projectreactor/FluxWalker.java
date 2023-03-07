@@ -31,8 +31,7 @@ import static reactor.core.Fuseable.SYNC;
  */
 public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implements Scannable {
 
-    final Publisher<T> leftPublisher;
-    final Publisher<T> rightPublisher;
+    final Publisher<T> leftPublisher, rightPublisher;
 
     final Comparator<T> comparator;
 
@@ -97,8 +96,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
         final CoreSubscriber<? super T> actual;
 
-        final WalkInner<T> leftSubscriber;
-        final WalkInner<T> rightSubscriber;
+        final WalkInner<T> leftSubscriber, rightSubscriber;
 
         final Comparator<T> comparator;
 
@@ -121,8 +119,7 @@ public final class FluxWalker<T extends Comparable<T>> extends Flux<T> implement
 
         volatile boolean cancelled;
 
-        T leftCurrent;
-        T rightCurrent;
+        T leftCurrent, rightCurrent;
 
         public WalkCoordinator(final CoreSubscriber<? super T> actual,
                                final Comparator<T> comparator,
