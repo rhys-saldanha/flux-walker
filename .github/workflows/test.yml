@@ -1,0 +1,40 @@
+name: Testing
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ feature/* ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup JDK 8
+        uses: actions/setup-java@v1
+        with:
+          java-version: 8
+
+      - name: Cache maven repository
+        uses: actions/cache@v2
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Download dependencies
+        run: mvn dependency:go-offline
+
+      - name: Run tests
+        run: mvn test
+
+      - name: Upload code coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: target/my-reports/jacoco.xml
+          fail_ci_if_error: true
